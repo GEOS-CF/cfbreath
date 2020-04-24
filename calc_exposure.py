@@ -15,7 +15,30 @@ from multiprocessing.pool import ThreadPool
 import dask
 
 
-def main(args):
+# Definition of model variables and corresponding scale factors
+MODELVARS = {
+ 'DUSMASS': 1.0,
+ 'OCSMASS': 1.0,
+ 'BCSMASS': 1.0,
+ 'SSSMASS': 1.0,
+ 'SO4SMASS': 132.14/96.06,
+}
+
+
+def calc_exposure(args):
+    '''
+    Calculate population weighted PM2.5 exposure for user-provided areas.
+    The PM2.5 exposure is calculated from three data sources:
+    1. Gridded PM2.5 concentration data (e.g. GEOS-CF, GEOS-FP, or MERRA-2).
+    2. Gridded region masks, to determine the area over which the concentration
+       averaged shall be calculated.
+    3. Gridded population density, to provide the weights given to the individual 
+       cells within an area.
+    The values are calculated for a sequence of times, with the start and end date
+    as well as the time frequency being supplied via the argument list.
+    The mask file is expected to be a netCDF file. Script 'shp2mask.py' can be used
+    to generate a netCDF file from shape files.
+    '''
     log = logging.getLogger(__name__)
     dask.config.set(pool=ThreadPool(10))
     # read masks
@@ -46,6 +69,7 @@ def main(args):
 
 
 def _get_exposure(args,times,i,masks,pop):
+    '''Calculate the population weighted average PM2.5 exposure for each mask region and the given time'''
     log = logging.getLogger(__name__)
     t = times[i]
     starttime = dt.datetime(t.year,t.month,t.day,t.hour,t.minute,t.second)
@@ -86,9 +110,11 @@ def _get_exposure(args,times,i,masks,pop):
 
 
 def _get_pm25(args,starttime,endtime):
+    '''Read model data and return PM2.5 (model) concentrations'''
     log = logging.getLogger(__name__)
     ifile = starttime.strftime(args.model_template)
     log.info('Reading {}'.format(ifile))
+    # Open file
     if 'opendap' in ifile:
         ds = xr.open_dataset(ifile).sel(time=slice(starttime.strftime('%Y-%m-%d'),endtime.strftime('%Y-%m-%d'))).mean(dim='time')
     else:
@@ -99,12 +125,13 @@ def _get_pm25(args,starttime,endtime):
             ds = xr.open_dataset(files).mean(dim='time')
         else:
             ds = xr.open_mfdataset(files).sel(time=slice(starttime.strftime('%Y-%m-%d'),endtime.strftime('%Y-%m-%d'))).mean(dim='time')
-    pm25 = ds['DUSMASS'] \
-         + ds['OCSMASS'] \
-         + ds['BCSMASS'] \
-         + ds['SSSMASS'] \
-         + ( ds['SO4SMASS'] * (132.14/96.06) )
-    pm25 = pm25.copy()
+    # Read all variables and apply scale factors
+    vars = list(MODELVARS.keys())
+    scal = list(MODELVARS.values())
+    pm25 = ds[vars[0]]*scal[0]
+    if len(vars)>1:
+        for v,s in zip(vars[1:],scal[1:]):
+            pm25 = pm25 + ds[v]*s
     ds.close()
     return pm25
 
@@ -126,11 +153,10 @@ def parse_args():
     return p.parse_args()
 
 
-
 if __name__ == '__main__':
     log = logging.getLogger()
     log.setLevel(logging.INFO)
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(logging.INFO)
     log.addHandler(handler)
-    main(parse_args())
+    calc_exposure(parse_args())

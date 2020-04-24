@@ -25,6 +25,8 @@ def main(args):
     # read shape file
     log.info('Reading {}'.format(args.input_file))
     sf = shp.Reader(args.input_file)
+    # filter
+    filter = _get_filter(args) 
     # calculate mask file for every shape in the shapefile,
     # write to (separate) file
     if args.append==1:
@@ -40,8 +42,12 @@ def main(args):
                 i = 1 if type(shape.record[0])==type(0) else 0
         iname = str(shape.record[i])
         iname = iname.replace(' ','_')
+        if filter is not None:
+            if iname not in filter:
+                log.info('Skip "{}" because it is not in filter'.format(iname))
+                continue
         if 'Canada' in iname:
-            log.info('Skip "{}" because it is Canada')
+            log.info('Skip "{}" because it is Canada'.format(iname))
             continue
         if args.append==0:
             ofile = args.output_file.replace('%n',iname)
@@ -131,6 +137,21 @@ def _plot_shape(args,shape,iname):
     return
 
 
+def _get_filter(args):
+    '''Read simple ascii file to determine zip codes that should be included in mask'''
+    log = logging.getLogger(__name__)
+    if args.filter is None:
+        return None
+    filter = []
+    log.info('Reading {}'.format(args.filter))
+    with open(args.filter) as f: 
+        Lines = f.readlines() 
+        for line in Lines: 
+            if '\t' in line:
+                filter.append(line.split('\t')[0])   
+    return filter
+
+
 def roundup(x):
     return np.float(int(math.ceil(x/10.0))*10)
 
@@ -149,6 +170,7 @@ def parse_args():
     p.add_argument('-r2', '--record2',type=int,help='last record to use',default=-999)
     p.add_argument('-a', '--append',type=int,help='append all masks in one file',default=1)
     p.add_argument('-s', '--skip',type=int,help='skip if output file exists. Only relevant if append is 0',default=1)
+    p.add_argument('-c', '--filter',type=str,help='filter',default=None)
     return p.parse_args()
 
 
